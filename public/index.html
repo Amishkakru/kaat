@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Kaat</title>
+  <meta name="theme-color" content="#0e1230">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Kaat">
+  <meta property="og:description" content="A five-player card game: bid for the call, name two hidden friends, pick the cut suit. Join my table.">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Kaat: a five-player bidding card game with hidden friends and a secret cut suit.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%231f2760'/%3E%3Cpath fill='%23e6a82a' d='M50 14C50 14 22 40 22 58c0 10 7 16 15 16 5 0 9-3 11-7-1 8-4 13-10 16h24c-6-3-9-8-10-16 2 4 6 7 11 7 8 0 15-6 15-16C78 40 50 14 50 14z'/%3E%3C/svg%3E">
+  <link rel="preload" as="font" type="font/woff2" href="/fonts/bodoni-moda.woff2" crossorigin>
+  <link rel="preload" as="font" type="font/woff2" href="/fonts/hanken-grotesk.woff2" crossorigin>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <!-- Suit shapes, drawn once and reused everywhere with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="s-S" viewBox="0 0 100 100"><path d="M50 5C50 5 9 38 9 62c0 13 10 21 22 21 7 0 13-3 17-9-1 9-5 16-12 21h28c-7-5-11-12-12-21 4 6 10 9 17 9 12 0 22-8 22-21C91 38 50 5 50 5z"/></symbol>
+      <symbol id="s-H" viewBox="0 0 100 100"><path d="M50 93C22 70 6 53 6 33 6 18 17 8 30 8c9 0 16 5 20 13 4-8 11-13 20-13 13 0 24 10 24 25 0 20-16 37-44 60z"/></symbol>
+      <symbol id="s-C" viewBox="0 0 100 100"><path d="M50 4a21 21 0 0 0-17 33 22 22 0 1 0 13 39c-1 9-5 16-12 20h32c-7-4-11-11-12-20a22 22 0 1 0 13-39A21 21 0 0 0 50 4z"/></symbol>
+      <symbol id="s-D" viewBox="0 0 100 100"><path d="M50 3C60 22 75 38 92 50 75 62 60 78 50 97 40 78 25 62 8 50 25 38 40 22 50 3z"/></symbol>
+    </defs>
+  </svg>
+
+  <div id="app" data-view="entry">
+    <header class="bar">
+      <a class="wordmark" href="/" aria-label="Kaat home">Kaat</a>
+      <div class="bar-room" id="barRoom" hidden></div>
+      <div class="bar-round" id="barRound"></div>
+      <div class="bar-actions">
+        <span class="conn" id="conn" hidden>Reconnecting</span>
+        <button class="btn quiet" id="btnRules" type="button">Rules</button>
+        <button class="btn quiet only-narrow" id="btnLedger" type="button">Ledger</button>
+      </div>
+    </header>
+
+    <!-- Landing: name, create or join -->
+    <section id="entry" class="entry">
+      <div class="entry-art" aria-hidden="true">
+        <div class="entry-fan" id="entryFan"></div>
+      </div>
+      <form class="entry-form" id="entryForm" autocomplete="off">
+        <h1>Kaat</h1>
+        <p class="lede">Five players. Bid for the call, name two friends nobody can see, and cut the suit.</p>
+        <label class="field">
+          <span>Your name</span>
+          <input id="nameInput" name="name" maxlength="16" required placeholder="Meera" autocapitalize="words" spellcheck="false">
+        </label>
+        <div class="entry-actions" id="entryActions">
+          <button class="btn primary big" type="submit" id="btnCreate" data-intent="create">Create a table</button>
+        </div>
+        <div class="join-row">
+          <label class="field field-code">
+            <span>Table code</span>
+            <input id="codeInput" name="code" maxlength="4" placeholder="BXQT" autocapitalize="characters" spellcheck="false" inputmode="text">
+          </label>
+          <button class="btn big" type="submit" id="btnJoin" data-intent="join">Join table</button>
+        </div>
+        <p class="form-error" id="entryError" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <main id="stage" class="stage">
+      <div class="table-col">
+        <div id="contract" class="contract" aria-live="polite"></div>
+        <div id="cloth" class="cloth">
+          <svg id="threads" class="threads" aria-hidden="true"></svg>
+          <div id="inlay" class="inlay" aria-hidden="true"></div>
+          <div id="seats" class="seats"></div>
+          <div id="trick" class="trick" aria-label="Cards on the table"></div>
+          <div id="sheet" class="sheet" hidden></div>
+        </div>
+        <div id="tray" class="tray"></div>
+        <div id="hand" class="hand" role="group" aria-label="Your hand"></div>
+      </div>
+      <aside id="ledger" class="ledger" aria-label="Ledger"></aside>
+    </main>
+
+    <dialog id="rules" class="rules"></dialog>
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+  </div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "kaat",
+  "version": "1.0.0",
+  "description": "Kaat - a 5-player bidding trick game with hidden friends and a secret cut suit. Runs locally; players join from a browser.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test",
+    "simulate": "node scripts/simulate.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
