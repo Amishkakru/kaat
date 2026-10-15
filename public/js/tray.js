@@ -13,6 +13,8 @@ export function mountTray() {
     if (!b) return;
     switch (b.dataset.act) {
       case 'bid': act({ t: 'bid', value: Number(b.dataset.value) }); break;
+      case 'stepUp': stepBid(1); break;
+      case 'stepDown': stepBid(-1); break;
       case 'pass': act({ t: 'pass' }); break;
       case 'claim': act({ t: 'claim' }); break;
       case 'voteYes': act({ t: 'vote', yes: true }); break;
@@ -23,20 +25,39 @@ export function mountTray() {
   });
 }
 
-/** Bidding is an open auction: one tap bids the minimum raise, the rungs jump higher, and nobody waits for a turn. */
+/** The stepper's price: the dialled-in bid, moved up to the lowest legal bid if someone has gone past it. */
+function stepperValue(legal) {
+  const i = legal.findIndex((v) => v >= store.ui.bid);
+  store.ui.bid = legal[i < 0 ? legal.length - 1 : i];
+  return store.ui.bid;
+}
+
+/** One step up or down the ladder (10 up to 200, then 5), never below the lowest legal bid. */
+function stepBid(dir) {
+  const legal = game()?.bidding?.legal;
+  if (!legal?.length) return;
+  const i = legal.indexOf(stepperValue(legal)) + dir;
+  store.ui.bid = legal[Math.min(legal.length - 1, Math.max(0, i))];
+  renderTray();
+}
+
+/** Bidding is an open auction with no turns: dial the price with − and +, then bid. */
 function auctionHtml(G, me, handPts) {
   const { legal, high } = G.bidding;
   const leader = high ? `${esc(seatName(high.seat))} leads at <b>${high.value}</b>.` : 'Nobody has bid yet.';
   if (legal.length) {
-    // The next bid up, then round numbers, so the 5-point steps above 200 still offer real jumps.
-    const rungs = [legal[1], ...legal.slice(2).filter((v) => v % 10 === 0)].filter(Boolean).slice(0, 4);
-    if (legal.length > 5 && !rungs.includes(legal.at(-1))) rungs.push(legal.at(-1));
+    const value = stepperValue(legal);
+    const i = legal.indexOf(value);
+    const down = legal[i - 1];
+    const up = legal[i + 1];
     return `
       <div class="bidbox" role="group" aria-label="Your bid">
-        <button class="btn primary bid-main" type="button" data-act="bid" data-value="${legal[0]}">Bid <b class="num">${legal[0]}</b></button>
-        <div class="ladder" role="group" aria-label="Bigger bids">
-          ${rungs.map((v) => `<button class="rung" type="button" data-act="bid" data-value="${v}">${v}</button>`).join('')}
+        <div class="stepper">
+          <button class="step" type="button" data-act="stepDown" ${down ? `aria-label="Lower the bid to ${down}"` : 'disabled aria-label="Lowest bid"'}>−</button>
+          <output class="stepval num" aria-live="polite">${value}</output>
+          <button class="step" type="button" data-act="stepUp" ${up ? `aria-label="Raise the bid to ${up}"` : 'disabled aria-label="Highest bid"'}>+</button>
         </div>
+        <button class="btn primary bid-main" type="button" data-act="bid" data-value="${value}">Bid</button>
         <button class="btn" type="button" data-act="pass">Pass</button>
       </div>
       <p class="prompt">${leader} Your four cards hold ${handPts} points. Passing is final.</p>`;
@@ -76,6 +97,7 @@ export function renderTray() {
   const d = G.deadline;
   const clockFor = d && (d.kind || G.turn === d.seat) ? d : null;
 
+  if (G.phase !== 'bidding') store.ui.bid = 0;
   let main = '';
   if (G.phase === 'bidding') {
     main = auctionHtml(G, me, handPts);
@@ -107,7 +129,7 @@ export function renderTray() {
       main += `<button class="btn claim" type="button" data-act="claim" title="Your side has taken enough that the caller cannot reach ${G.bid}. Three of the five players must agree to end the round.">Claim the round</button>`;
     }
   } else if (G.phase === 'done') {
-    main = '<p class="prompt">Round complete.</p>';
+    main = ''; // the result sheet covers this row
   }
 
   const banner = away
@@ -115,7 +137,13 @@ export function renderTray() {
     : '';
   const clock = clockFor ? `<span class="clock" data-at="${clockFor.at}" data-seat="${clockFor.seat ?? ''}" data-kind="${clockFor.kind ?? 'turn'}"></span>` : '';
   const html = `${banner}<div class="tray-row ${G.claim.open ? 'is-vote' : ''}">${main}${clock}</div>`;
-  renderIfChanged(root, { html, my: myTurn }, () => { root.innerHTML = html; });
+  const held = document.activeElement?.closest?.('#tray [data-act]')?.dataset.act;
+  renderIfChanged(root, { html, my: myTurn }, () => {
+    root.innerHTML = html;
+    if (!held) return;
+    // Stepping re-draws the tray; keep the focus on the same button (or on Bid once a limit button switches off).
+    (root.querySelector(`[data-act="${held}"]:not(:disabled)`) ?? root.querySelector('[data-act="bid"]'))?.focus();
+  });
   tickClock();
 }
 

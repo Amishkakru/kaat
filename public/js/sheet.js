@@ -192,11 +192,11 @@ function resultHtml(snap, G) {
         <li class="board-head"><span></span><span></span><span>Points</span><span>Round</span><span>Total</span></li>
         ${rows}
       </ul>
+      </div>
       <div class="result-foot">
         ${host
     ? `<button class="btn primary big" type="button" data-act="next">${lastRound ? 'See final standings' : 'Next round'}</button>`
     : `<p class="sub">Waiting for ${esc(seatName(snap.host))} to continue.</p>`}
-      </div>
       </div>
     </div>`;
 }

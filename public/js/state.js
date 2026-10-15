@@ -10,6 +10,7 @@ export const store = {
   send: () => {},
   ui: {
     tab: 'play',
+    bid: 0, // the price on the bid stepper; snaps to the nearest legal bid at or above it
     cut: null,
     friends: [],
     selected: null, // touch: the card waiting for a second tap
