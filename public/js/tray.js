@@ -1,4 +1,4 @@
-// The strip between the cloth and your hand: bid controls and plain-language prompts.
+// The strip between the cloth and your hand: bid controls, the early-end vote and plain-language prompts.
 
 import {
   store, game, seatName, serverNow, act,
@@ -11,24 +11,55 @@ export function mountTray() {
   root.addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]');
     if (!b) return;
-    const G = game();
-    const legal = G?.bidding.legal ?? [];
-    const bid = store.ui.bid;
     switch (b.dataset.act) {
-      case 'dec': store.ui.bid = legal[Math.max(0, legal.indexOf(bid) - 1)]; renderTray(); break;
-      case 'inc': store.ui.bid = legal[Math.min(legal.length - 1, legal.indexOf(bid) + 1)]; renderTray(); break;
-      case 'max': store.ui.bid = legal.at(-1); renderTray(); break;
-      case 'bid': act({ t: 'bid', value: bid }); break;
+      case 'bid': act({ t: 'bid', value: Number(b.dataset.value) }); break;
       case 'pass': act({ t: 'pass' }); break;
+      case 'claim': act({ t: 'claim' }); break;
+      case 'voteYes': act({ t: 'vote', yes: true }); break;
+      case 'voteNo': act({ t: 'vote', yes: false }); break;
       case 'resume': act({ t: 'resume' }); break;
       default:
     }
   });
-  root.addEventListener('keydown', (e) => {
-    if (!$('.bidbox', root)) return;
-    if (e.key === 'ArrowUp' || e.key === 'ArrowRight') { e.preventDefault(); $('[data-act="inc"]', root)?.click(); }
-    if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') { e.preventDefault(); $('[data-act="dec"]', root)?.click(); }
-  });
+}
+
+/** Bidding is an open auction: one tap bids the minimum raise, the rungs jump higher, and nobody waits for a turn. */
+function auctionHtml(G, me, handPts) {
+  const { legal, high } = G.bidding;
+  const leader = high ? `${esc(seatName(high.seat))} leads at <b>${high.value}</b>.` : 'Nobody has bid yet.';
+  if (legal.length) {
+    const rungs = legal.slice(1, 5);
+    if (legal.length > 5) rungs.push(legal.at(-1));
+    return `
+      <div class="bidbox" role="group" aria-label="Your bid">
+        <button class="btn primary bid-main" type="button" data-act="bid" data-value="${legal[0]}">Bid <b class="num">${legal[0]}</b></button>
+        <div class="ladder" role="group" aria-label="Bigger bids">
+          ${rungs.map((v) => `<button class="rung" type="button" data-act="bid" data-value="${v}">${v}</button>`).join('')}
+        </div>
+        <button class="btn" type="button" data-act="pass">Pass</button>
+      </div>
+      <p class="prompt">${leader} Your four cards hold ${handPts} points. Passing is final.</p>`;
+  }
+  if (high?.seat === me) {
+    return `<p class="prompt"><b>You hold the high bid at ${high.value}.</b> If nobody bids higher before the clock runs out, the call is yours.</p>`;
+  }
+  return `<p class="prompt"><b>You passed.</b> ${leader} Your four cards hold ${handPts} points.</p>`;
+}
+
+/** An open vote on ending the round early. Everyone at the table has one vote. */
+function voteHtml(G, me) {
+  const o = G.claim.open;
+  const mine = o.votes[me];
+  const by = o.by === me ? '<b>You claim the round.</b>' : `<b>${esc(seatName(o.by))} claims the round.</b>`;
+  const answer = mine === null
+    ? '<button class="btn primary" type="button" data-act="voteYes">End the round</button><button class="btn" type="button" data-act="voteNo">Play on</button>'
+    : `<span class="voted">You voted ${mine ? 'yes' : 'no'}.</span>`;
+  return `
+    <div class="votebox" role="group" aria-label="Vote on ending the round">
+      <p class="prompt">${by} The caller’s side cannot reach ${G.bid}, even with every point still in play.
+        <span class="tally"><b>${o.yes}</b> yes, <b>${o.no}</b> no. ${G.claim.need} yes votes end the round.</span></p>
+      <div class="vote-actions">${answer}</div>
+    </div>`;
 }
 
 export function renderTray() {
@@ -41,39 +72,22 @@ export function renderTray() {
   const myTurn = G.turn === me && !G.showTrick;
   const handPts = G.firstHand.reduce((s, c) => s + pointsOf(c), 0);
   const away = snap.seats[me].auto && snap.seats[me].kind === 'human';
-  const clockFor = G.deadline && G.turn === G.deadline.seat ? G.deadline : null;
+  const d = G.deadline;
+  const clockFor = d && (d.kind || G.turn === d.seat) ? d : null;
 
   let main = '';
-  let sig = {};
   if (G.phase === 'bidding') {
-    const legal = G.bidding.legal;
-    if (myTurn && legal.length) {
-      if (!legal.includes(store.ui.bid)) store.ui.bid = legal[0];
-      const high = G.bidding.high;
-      main = `
-        <div class="bidbox" role="group" aria-label="Your bid">
-          <button class="step" type="button" data-act="dec" aria-label="Lower the bid" ${store.ui.bid === legal[0] ? 'disabled' : ''}>−</button>
-          <output class="bidval" aria-live="polite">${store.ui.bid}</output>
-          <button class="step" type="button" data-act="inc" aria-label="Raise the bid" ${store.ui.bid === legal.at(-1) ? 'disabled' : ''}>+</button>
-          <button class="btn primary" type="button" data-act="bid">Bid ${store.ui.bid}</button>
-          <button class="btn" type="button" data-act="pass">Pass</button>
-          ${legal.length > 2 ? `<button class="btn quiet" type="button" data-act="max">Go to ${legal.at(-1)}</button>` : ''}
-        </div>
-        <p class="prompt">${high ? `High bid ${high.value} by ${esc(seatName(high.seat))}.` : 'Opening bid is 170.'} Your four cards hold ${handPts} points. Passing is final for this round.</p>`;
-      sig = { b: store.ui.bid, legal: [legal[0], legal.at(-1)] };
-    } else {
-      main = `<p class="prompt"><b>${esc(seatName(G.turn))}</b> is bidding. Your four cards hold ${handPts} points.</p>`;
-      sig = { t: G.turn };
-    }
+    main = auctionHtml(G, me, handPts);
   } else if (G.phase === 'calling') {
     main = G.caller === me
       ? '<p class="prompt"><b>You hold the call.</b> Name two friend cards and the cut suit on the table.</p>'
       : `<p class="prompt"><b>${esc(seatName(G.caller))}</b> is naming two friend cards and the cut suit.</p>`;
   } else if (G.phase === 'playing') {
-    if (G.showTrick) {
+    if (G.claim.open) {
+      main = voteHtml(G, me);
+    } else if (G.showTrick) {
       const t = G.showTrick;
       main = `<p class="prompt"><b>${esc(seatName(t.winner))}</b> takes the trick${t.points ? ` and ${t.points} points` : ''}.</p>`;
-      sig = { w: t.winner, no: t.no };
     } else if (myTurn) {
       const lead = G.trick.plays[0]?.card;
       if (!lead) {
@@ -85,10 +99,11 @@ export function renderTray() {
           ? `<p class="prompt"><b>Your turn.</b> Follow ${SUIT_NAME[ls].toLowerCase()} ${suitSvg(ls, 'inline')}</p>`
           : `<p class="prompt"><b>Your turn.</b> You hold no ${SUIT_NAME[ls].toLowerCase()}. Play any card; a ${SUIT_NAME[G.cut].toLowerCase()} ${suitSvg(G.cut, 'inline')} cuts.</p>`;
       }
-      sig = { lead: G.trick.plays[0]?.card ?? null, my: true };
     } else {
       main = `<p class="prompt">Waiting for <b>${esc(seatName(G.turn))}</b>.</p>`;
-      sig = { t: G.turn };
+    }
+    if (G.claim.canStart) {
+      main += `<button class="btn claim" type="button" data-act="claim" title="Your side has taken enough that the caller cannot reach ${G.bid}. Three of the five players must agree to end the round.">Claim the round</button>`;
     }
   } else if (G.phase === 'done') {
     main = '<p class="prompt">Round complete.</p>';
@@ -97,8 +112,8 @@ export function renderTray() {
   const banner = away
     ? '<div class="away-banner"><span>Autopilot is playing your seat.</span><button class="btn small" type="button" data-act="resume">Take over</button></div>'
     : '';
-  const clock = clockFor ? `<span class="clock" data-at="${clockFor.at}" data-seat="${clockFor.seat}"></span>` : '';
-  const html = `${banner}<div class="tray-row">${main}${clock}</div>`;
+  const clock = clockFor ? `<span class="clock" data-at="${clockFor.at}" data-seat="${clockFor.seat ?? ''}" data-kind="${clockFor.kind ?? 'turn'}"></span>` : '';
+  const html = `${banner}<div class="tray-row ${G.claim.open ? 'is-vote' : ''}">${main}${clock}</div>`;
   renderIfChanged(root, { html, my: myTurn }, () => { root.innerHTML = html; });
   tickClock();
 }
@@ -109,7 +124,13 @@ export function tickClock() {
   if (!c) return;
   const left = Math.max(0, Number(c.dataset.at) - serverNow());
   const s = Math.ceil(left / 1000);
-  const mine = Number(c.dataset.seat) === store.snap.you;
-  c.textContent = `${mine ? 'Your time ' : `${seatName(Number(c.dataset.seat))} `}0:${String(s).padStart(2, '0')}`;
-  c.classList.toggle('is-low', s <= 5);
+  const time = `0:${String(s).padStart(2, '0')}`;
+  const kind = c.dataset.kind;
+  if (kind === 'auction') c.textContent = `Auction closes ${time}`;
+  else if (kind === 'claim') c.textContent = `Vote ends ${time}`;
+  else {
+    const seat = Number(c.dataset.seat);
+    c.textContent = `${seat === store.snap.you ? 'Your time ' : `${seatName(seat)} `}${time}`;
+  }
+  c.classList.toggle('is-low', s <= 3 || (kind === 'turn' && s <= 5));
 }

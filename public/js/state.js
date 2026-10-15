@@ -10,7 +10,6 @@ export const store = {
   send: () => {},
   ui: {
     tab: 'play',
-    bid: null,
     cut: null,
     friends: [],
     selected: null, // touch: the card waiting for a second tap

@@ -38,6 +38,7 @@ function client(url, { brain = false } = {}) {
     if (m.t === 'error') c.errors.push(m);
     if (m.t === 'state') {
       c.state = m.s;
+      c.version = m.v;
       c.states.push(m.s);
       if (c.brain) c.think();
       [...c.waiters].forEach((w) => w());
@@ -46,12 +47,16 @@ function client(url, { brain = false } = {}) {
   c.think = () => {
     const g = c.state.game;
     if (!g || c.state.stage !== 'round' || g.showTrick) return;
-    if (g.turn !== c.state.you) return;
     const a = decide(g);
     if (!a) return;
+    const key = `${c.version}:${a.type}:${a.value ?? a.card ?? a.yes ?? ''}`;
+    if (key === c.lastSent) return; // one answer per state is enough
+    c.lastSent = key;
     if (a.type === 'bid') c.send({ t: 'bid', value: a.value });
     else if (a.type === 'pass') c.send({ t: 'pass' });
     else if (a.type === 'call') c.send({ t: 'call', friends: a.friends, cut: a.cut });
+    else if (a.type === 'claim') c.send({ t: 'claim' });
+    else if (a.type === 'vote') c.send({ t: 'vote', yes: a.yes });
     else c.send({ t: 'play', card: a.card });
   };
   return c;
@@ -92,7 +97,7 @@ test('five humans play a full round over WebSockets', async () => {
     const results = all.map((c) => c.state.game.result);
     for (const r of results) assert.deepEqual(r, results[0]);
     const r = results[0];
-    assert.equal(r.won.reduce((a, b) => a + b, 0), 250);
+    assert.equal(r.won.reduce((a, b) => a + b, 0), 250 - (r.early?.left ?? 0), 'every point is accounted for, bar those left in play after an early end');
     assert.deepEqual(host.state.scores, r.deltas);
 
     // Nobody was ever sent another seat's cards.
@@ -182,15 +187,22 @@ test('rejects illegal moves, unknown rooms, a sixth player and late joiners', as
     await sleep(40);
     assert.equal(stranger.errors.at(-1).code, 'started');
 
-    // Out-of-turn bid, then a play during bidding.
-    const g = host.state.game;
-    const notTurn = [host, ...guests].find((c) => c.state.you !== g.bidding.turn);
-    notTurn.send({ t: 'bid', value: 170 });
+    // Bad bids, a play during the auction, and a bid after passing.
+    const guest = guests[0];
+    guest.send({ t: 'bid', value: 175 });
     await sleep(40);
-    assert.match(notTurn.errors.at(-1).msg, /turn/i);
-    notTurn.send({ t: 'play', card: notTurn.state.game.hand[0] });
+    assert.match(guest.errors.at(-1).msg, /steps of 10/);
+    guest.send({ t: 'play', card: guest.state.game.hand[0] });
     await sleep(40);
-    assert.ok(notTurn.errors.at(-1).msg);
+    assert.ok(guest.errors.at(-1).msg);
+    guest.send({ t: 'pass' });
+    await guest.until((s) => s.game.bidding.passed[s.you], 'pass recorded');
+    guest.send({ t: 'bid', value: 170 });
+    await sleep(40);
+    assert.match(guest.errors.at(-1).msg, /passed/);
+    guest.send({ t: 'vote', yes: true });
+    await sleep(40);
+    assert.match(guest.errors.at(-1).msg, /no vote/i);
     [host, ...guests, sixth, stranger].forEach((c) => c.close());
   } finally {
     await app.close();
@@ -260,6 +272,92 @@ test('turn timers: an idle human is auto-played, then flagged as away after two 
     await host.until((s) => s.seats[1].auto === false, 'seat resumed');
     idle.close();
     host.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test('auction over the wire: a human can bid at any moment, and 250 ends it', async () => {
+  const { app, url } = await boot();
+  try {
+    const me = client(url);
+    await me.open;
+    me.send({ t: 'create', name: 'Bidder' });
+    await me.until((s) => s.stage === 'lobby');
+    me.send({ t: 'settings', rounds: 1, timers: true });
+    me.send({ t: 'start', fillBots: true });
+    const open = await me.until((s) => s.game?.phase === 'bidding', 'auction open');
+    assert.equal(open.game.deadline.kind, 'auction');
+    assert.equal(open.game.turn, null, 'nobody has the turn');
+    assert.equal(open.game.bidding.legal[0], 170);
+    me.send({ t: 'bid', value: 250 });
+    const done = await me.until((s) => s.game?.phase === 'calling', 'auction closed');
+    assert.equal(done.game.caller, me.state.you);
+    assert.equal(done.game.bid, 250);
+    me.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test('auction over the wire: bots alone settle it, and the clock closes it', async () => {
+  const { app, url } = await boot();
+  try {
+    const me = client(url);
+    await me.open;
+    me.send({ t: 'create', name: 'Quiet' });
+    await me.until((s) => s.stage === 'lobby');
+    me.send({ t: 'settings', rounds: 1, timers: true });
+    me.send({ t: 'start', fillBots: true });
+    const st = await me.until((s) => s.game && s.game.phase !== 'bidding', 'auction closed by the clock or by passes');
+    assert.ok(st.game.bid >= 170 && st.game.bid <= 250);
+    assert.ok(st.game.log.some((e) => e.type === 'caller'));
+    me.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test('the scoring scheme is a host setting, validated, and used for the match', async () => {
+  const { app, url } = await boot();
+  try {
+    const host = client(url, { brain: true });
+    await host.open;
+    host.send({ t: 'create', name: 'Host' });
+    const lobby = await host.until((s) => s.stage === 'lobby');
+    assert.equal(lobby.settings.scoring, 'pairwise', 'head to head is the default');
+    const guest = client(url, { brain: true });
+    await guest.open;
+    guest.send({ t: 'join', room: host.joined.room, name: 'Guest' });
+    await guest.until((s) => s.stage === 'lobby');
+    guest.send({ t: 'settings', scoring: 'classic' });
+    await sleep(40);
+    assert.match(guest.errors.at(-1).msg, /host/i);
+    host.send({ t: 'settings', scoring: 'bogus' });
+    await sleep(40);
+    assert.equal(host.state.settings.scoring, 'pairwise', 'unknown schemes are ignored');
+    host.send({ t: 'settings', scoring: 'classic', rounds: 1, timers: false });
+    await host.until((s) => s.settings.scoring === 'classic');
+    await guest.until((s) => s.settings.scoring === 'classic');
+    host.send({ t: 'start', fillBots: true });
+    await host.until((s) => s.stage === 'between' && s.game?.phase === 'done', 'round end');
+    assert.equal(host.state.game.scoring, 'classic');
+    assert.equal(host.state.game.result.scoring, 'classic');
+    guest.close();
+    host.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test('GET /api/info lists the scoring schemes for the lobby', async () => {
+  const { app } = await boot();
+  try {
+    const port = app.server.address().port;
+    const res = await fetch(`http://127.0.0.1:${port}/api/info`);
+    const info = await res.json();
+    assert.deepEqual(info.schemes.map((x) => x.id), ['classic', 'pairwise', 'margin']);
+    assert.ok(info.schemes.every((x) => x.name && x.blurb));
   } finally {
     await app.close();
   }

@@ -11,6 +11,14 @@ import {
 } from './cards.js';
 
 const RANK_ROW = ['A', 'K', 'Q', 'J', '10', '9', '8', '7', '6', '5'];
+// The server sends the real names and descriptions with /api/info; these only cover the first moment before it arrives.
+const FALLBACK_SCHEMES = [
+  { id: 'classic', name: 'Classic', blurb: '' },
+  { id: 'pairwise', name: 'Head to head', blurb: '' },
+  { id: 'margin', name: 'Margin', blurb: '' },
+];
+const schemes = () => store.info?.schemes ?? FALLBACK_SCHEMES;
+const schemeName = (id) => schemes().find((x) => x.id === id)?.name ?? id;
 
 export function mountSheet() {
   const root = $('#sheet');
@@ -52,6 +60,7 @@ function lobbyHtml(snap) {
   const empty = 5 - seated;
   const rounds = [1, 3, 5, 8];
   const hostName = esc(snap.seats[snap.host]?.name ?? 'the host');
+  const scheme = schemes().find((x) => x.id === snap.settings.scoring);
   return `
     <div class="sheet-panel lobby">
       <h2>Table</h2>
@@ -67,6 +76,15 @@ function lobbyHtml(snap) {
         <div class="seg" role="radiogroup" aria-labelledby="roundsLabel">
           ${rounds.map((n) => `<button type="button" role="radio" aria-checked="${snap.settings.rounds === n}" class="${snap.settings.rounds === n ? 'is-on' : ''}" data-rounds="${n}" ${host ? '' : 'disabled'}>${n}</button>`).join('')}
         </div>
+      </div>
+      <div class="setting setting-stack">
+        <div class="setting-row">
+          <span id="scoringLabel">Scoring</span>
+          <div class="seg" role="radiogroup" aria-labelledby="scoringLabel">
+            ${schemes().map((x) => `<button type="button" role="radio" aria-checked="${snap.settings.scoring === x.id}" class="${snap.settings.scoring === x.id ? 'is-on' : ''}" data-scoring="${x.id}" ${host ? '' : 'disabled'}>${esc(x.name)}</button>`).join('')}
+          </div>
+        </div>
+        ${scheme?.blurb ? `<p class="scheme-note">${esc(scheme.blurb)}</p>` : ''}
       </div>
       <div class="setting">
         <span id="timerLabel">Turn timers</span>
@@ -130,6 +148,8 @@ function resultHtml(snap, G) {
   const r = G.result;
   const callerName = esc(seatName(r.caller));
   const host = isHost();
+  const left = r.early?.left ?? 0; // points still unplayed when a vote ended the round
+  const oppPoints = 250 - r.teamPoints - left;
   const pct = (n) => `${(n / 250) * 100}%`;
   const order = [r.caller, ...r.friendSeats, ...[0, 1, 2, 3, 4].filter((s) => !r.teamSeats.includes(s))];
   const cardsOf = (s) => G.revealed.find((x) => x.seat === s)?.cards ?? [];
@@ -146,23 +166,38 @@ function resultHtml(snap, G) {
       </li>`;
   }).join('');
   const soloNote = r.friendSeats.length === 0 ? '<p class="sub">Both friend cards were in the caller’s own hand, so the caller played alone.</p>' : '';
+  const verdict = r.early
+    ? `The opposition claimed the round after trick ${r.early.tricks} and the table agreed, ${r.early.yes} votes to ${r.early.no}. The caller’s side held <b>${r.teamPoints}</b> points. With every point still in play it could reach only <b>${r.best}</b> of the <b>${r.bid}</b> it needed.`
+    : `The caller’s side took <b>${r.teamPoints}</b> of the <b>${r.bid}</b> points it needed. ${r.success ? 'It wins the round.' : 'The opponents win the round.'}`;
+  const stake = r.margin
+    ? `stake <b>${r.unit}</b> (${r.stake} for the bid, ${r.margin} more for the margin)`
+    : `stake <b>${r.unit}</b>`;
   return `
     <div class="sheet-panel result">
+      <div class="result-main">
       <h2>${callerName} ${r.success ? 'made the call' : 'fell short'}</h2>
-      <p class="sub">The caller’s side took <b>${r.teamPoints}</b> of the <b>${r.bid}</b> points it needed. ${r.success ? 'It wins the round.' : 'The opponents win the round.'}</p>
-      <div class="split" role="img" aria-label="Caller side ${r.teamPoints} points, opponents ${250 - r.teamPoints} points, bid ${r.bid}">
+      <p class="sub">${verdict}</p>
+      <div class="split" role="img" aria-label="Caller side ${r.teamPoints} points, opponents ${oppPoints} points${left ? `, ${left} not played` : ''}, bid ${r.bid}">
         <div class="split-team" style="width:${pct(r.teamPoints)}"><span>${r.teamPoints}</span></div>
-        <div class="split-opp" style="width:${pct(250 - r.teamPoints)}"><span>${250 - r.teamPoints}</span></div>
+        ${left ? `<div class="split-left" style="width:${pct(left)}">${left >= 15 ? `<span>${left}</span>` : ''}</div>` : ''}
+        <div class="split-opp" style="width:${pct(oppPoints)}"><span>${oppPoints}</span></div>
         <div class="split-bid" style="left:${pct(r.bid)}"><small>Bid ${r.bid}</small></div>
       </div>
+      ${left ? `<p class="legend">Hatched: ${left} points that were never played.</p>` : ''}
       ${soloNote}
+      <p class="sub scoring-note">${esc(schemeName(r.scoring))}: ${stake}.</p>
+      </div>
+      <div class="result-side">
       <ul class="board">
         <li class="board-head"><span></span><span></span><span>Points</span><span>Round</span><span>Total</span></li>
         ${rows}
       </ul>
-      ${host
+      <div class="result-foot">
+        ${host
     ? `<button class="btn primary big" type="button" data-act="next">${lastRound ? 'See final standings' : 'Next round'}</button>`
     : `<p class="sub">Waiting for ${esc(seatName(snap.host))} to continue.</p>`}
+      </div>
+      </div>
     </div>`;
 }
 
@@ -195,6 +230,7 @@ function onClick(e) {
   const ui = store.ui;
   if (t.dataset.rounds) return act({ t: 'settings', rounds: Number(t.dataset.rounds) });
   if (t.dataset.timers) return act({ t: 'settings', timers: t.dataset.timers === '1' });
+  if (t.dataset.scoring) return act({ t: 'settings', scoring: t.dataset.scoring });
   if (t.dataset.cut) { ui.cut = t.dataset.cut; return rerenderSheet(); }
   if (t.dataset.pick) {
     const c = t.dataset.pick;

@@ -20,8 +20,21 @@ function describe(e, G) {
   switch (e.type) {
     case 'bid': return { html: `${n(e.seat)} bid <b class="num">${e.value}</b>`, cls: 'bid' };
     case 'pass': return { html: `${n(e.seat)} passed`, cls: 'pass' };
+    case 'redeal': {
+      const who = e.seats.map((s) => esc(seatName(s)));
+      const list = who.length > 1 ? `${who.slice(0, -1).join(', ')} and ${who.at(-1)}` : who[0];
+      return { html: `Dealt again: ${list} held no ace, king, queen or jack`, cls: 'note' };
+    }
     case 'caller': return {
-      html: e.forced ? `Everyone passed. ${n(e.seat)} takes the call at <b class="num">${e.bid}</b>` : `${n(e.seat)} won the bid at <b class="num">${e.bid}</b>`,
+      html: e.forced ? `Nobody bid. ${n(e.seat)} takes the call at <b class="num">${e.bid}</b>` : `${n(e.seat)} won the auction at <b class="num">${e.bid}</b>`,
+      cls: 'key',
+    };
+    case 'claim': return { html: `${n(e.seat)} claims the round: the caller’s side cannot reach ${G.bid}`, cls: 'vote' };
+    case 'vote': return { html: `${n(e.seat)} voted ${e.yes ? 'yes' : 'no'}`, cls: 'vote' };
+    case 'claimResult': return {
+      html: e.passed
+        ? `Claim carried, ${e.yes} yes to ${e.no} no. The round ends early`
+        : `Claim failed, ${e.yes} yes to ${e.no} no. Play continues`,
       cls: 'key',
     };
     case 'contract': return {
@@ -34,7 +47,11 @@ function describe(e, G) {
     case 'autopilot': return { html: `${n(e.seat)} is on autopilot`, cls: 'note' };
     case 'away': return { html: `${n(e.seat)} disconnected`, cls: 'note' };
     case 'back': return { html: `${n(e.seat)} is back`, cls: 'note' };
-    case 'end': return { html: e.success ? `The caller’s side made its bid with ${e.teamPoints}` : `The caller’s side fell short with ${e.teamPoints} of ${e.bid}`, cls: 'key' };
+    case 'end': return {
+      html: e.success ? `The caller’s side made its bid with ${e.teamPoints}`
+        : `The caller’s side ${e.early ? 'had' : 'fell short with'} ${e.teamPoints} of ${e.bid}${e.early ? ' and cannot reach it' : ''}`,
+      cls: 'key',
+    };
     case 'trick': {
       const t = G.tricks[e.no - 1];
       if (!t) return null;
@@ -68,7 +85,7 @@ export function renderLedger() {
         </tr>`).join('');
     const hist = (snap.history ?? []).map((h) => `
         <li><b>Round ${h.round}</b> ${esc(seatName(h.caller))} ${h.success ? 'made' : 'missed'} ${h.bid}
-        <small>${h.teamPoints} taken</small></li>`).join('');
+        <small>${h.teamPoints} taken${h.early ? ', ended early' : ''}${h.redeals ? `, dealt again ${h.redeals > 1 ? `${h.redeals} times` : 'once'}` : ''}</small></li>`).join('');
     body = `
       <table class="scores">
         <thead><tr><th>Player</th><th>This round</th><th>Total</th></tr></thead>

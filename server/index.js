@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { Room, REAL_TIMING, FAST_TIMING } from './room.js';
+import { SCHEMES } from '../engine/scoring.js';
 import { clientIp, isLocalHost, originAllowed, Hits, Bucket } from './guard.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -124,6 +125,7 @@ export function createKaatServer({
       const local = isLocalHost(req.headers.host);
       return reply(200, 'application/json', JSON.stringify({
         lan: local ? lanAddresses() : [], port: server.address()?.port ?? port,
+        schemes: Object.entries(SCHEMES).map(([id, s]) => ({ id, ...s })),
       }), { 'cache-control': 'no-store' });
     }
 

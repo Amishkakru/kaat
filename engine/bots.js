@@ -4,33 +4,65 @@
 import {
   SUITS, makeDeck, suitOf, rankOf, pointsOf, compareRank, RANK_VALUE,
 } from './cards.js';
+import { SEATS } from './round.js';
 
 const sum = (xs) => xs.reduce((a, b) => a + b, 0);
 const minBy = (xs, key) => xs.reduce((best, x) => (key(x) < key(best) ? x : best));
 const maxBy = (xs, key) => xs.reduce((best, x) => (key(x) > key(best) ? x : best));
 
-/** Returns { type: 'bid', value } | { type: 'pass' } | { type: 'call', friends, cut } | { type: 'play', card } */
+/**
+ * Returns { type: 'bid', value } | { type: 'pass' } | { type: 'call', friends, cut } | { type: 'play', card }
+ * | { type: 'claim' } | { type: 'vote', yes }, or null when this seat has nothing to do right now.
+ * The auction and the early-end vote have no single turn, so they are checked first.
+ */
 export function decide(view, rng = Math.random) {
+  if (view.phase === 'bidding') return decideBid(view);
+  if (view.phase === 'playing' && view.claim.open) return decideVote(view);
   if (view.turn !== view.seat) return null;
-  if (view.phase === 'bidding') return decideBid(view, rng);
   if (view.phase === 'calling') return decideCall(view, rng);
-  if (view.phase === 'playing') return decidePlay(view);
+  if (view.phase === 'playing') return view.claim.canStart ? { type: 'claim' } : decidePlay(view);
   return null;
+}
+
+/** Plays an auction through with bots only, seats acting in order from the opening seat. For tests and simulation. */
+export function runAuction(round) {
+  for (let laps = 0; round.phase === 'bidding' && laps < 50; laps++) {
+    for (let i = 0; i < SEATS && round.phase === 'bidding'; i++) {
+      const seat = (round.startSeat + i) % SEATS;
+      const a = decide(round.view(seat));
+      if (a?.type === 'bid') round.placeBid(seat, a.value);
+      else if (a?.type === 'pass') round.pass(seat);
+    }
+  }
+  if (round.phase === 'bidding') round.closeBidding();
 }
 
 // ---------------------------------------------------------------- bidding
 
-function decideBid(v, rng) {
+/** The same hand always gets the same nudge, so a bot's limit holds steady while the auction runs. */
+function handTemperament(hand) {
+  let h = 7;
+  for (const ch of [...hand].sort().join('')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return (h % 17) - 8;
+}
+
+/** Bid the minimum raise while it is within reach; pass once the price goes past what the hand is worth. */
+function decideBid(v) {
+  const { legal, canPass } = v.bidding;
+  if (!legal.length) return canPass ? { type: 'pass' } : null;
   const hand = v.firstHand;
   const pts = sum(hand.map(pointsOf));
   const longest = Math.max(...SUITS.map((s) => hand.filter((c) => suitOf(c) === s).length));
   // Fitted on 6,000 simulated rounds: suit length and the A♠ predict the team's final points far
   // better than the points showing in the first four cards.
-  let estimate = 134 + 0.24 * pts + 12.4 * longest + (hand.includes('AS') ? 12 : 0);
-  estimate += (rng() - 0.5) * 16; // a little temperament so bots differ
+  const estimate = 134 + 0.24 * pts + 12.4 * longest + (hand.includes('AS') ? 12 : 0) + handTemperament(hand);
   const ceiling = Math.floor(estimate / 10) * 10;
-  const value = v.bidding.legal.find((x) => x <= ceiling);
-  return value === undefined ? { type: 'pass' } : { type: 'bid', value };
+  return legal[0] <= ceiling ? { type: 'bid', value: legal[0] } : { type: 'pass' };
+}
+
+/** The claim is only ever started when it is provably true, so a bot agrees. */
+function decideVote(v) {
+  return v.claim.open.votes[v.seat] === null ? { type: 'vote', yes: v.claim.possible } : null;
 }
 
 // ---------------------------------------------------------------- calling

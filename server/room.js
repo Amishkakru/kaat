@@ -4,23 +4,34 @@
 import crypto from 'node:crypto';
 import { Match, SEATS } from '../engine/round.js';
 import { decide } from '../engine/bots.js';
+import { DEFAULT_SCHEME, isScheme } from '../engine/scoring.js';
 
-export const DEFAULT_SETTINGS = { rounds: 5, timers: true };
+export const DEFAULT_SETTINGS = { rounds: 5, timers: true, scoring: DEFAULT_SCHEME };
 export const ROUND_CHOICES = [1, 3, 5, 8];
 
 const BOT_NAMES = ['Mira', 'Dev', 'Zoya', 'Kabir', 'Anaya', 'Rohan', 'Tara', 'Veer', 'Isha', 'Neel'];
 
+// The auction clock: `auctionOpen` before the first bid, then `auctionBid` after every bid ("going once").
+// `claim` is how long the table has to vote on ending a round early; it runs even with turn timers off.
 export const REAL_TIMING = {
   botMin: 700,
   botMax: 1400,
+  auctionBotMin: 1500,
+  auctionBotMax: 3500,
   trickPause: 2300,
-  limits: { bidding: 25_000, calling: 60_000, playing: 30_000 },
+  limits: {
+    auctionOpen: 25_000, auctionBid: 9_000, calling: 60_000, playing: 30_000, claim: 20_000,
+  },
 };
 export const FAST_TIMING = {
   botMin: 5,
   botMax: 15,
+  auctionBotMin: 5,
+  auctionBotMax: 15,
   trickPause: 30,
-  limits: { bidding: 400, calling: 600, playing: 500 },
+  limits: {
+    auctionOpen: 400, auctionBid: 250, calling: 600, playing: 500, claim: 300,
+  },
 };
 
 const AWAY_AFTER = 2; // consecutive timeouts before a seat is put on autopilot
@@ -39,7 +50,9 @@ export class Room {
     this.pauseUntil = 0;
     this.showTrick = null;
     this.deadline = null;
-    this.timer = null;
+    this.timers = [];
+    this.auction = null; // { at, ms }: when the auction closes if nobody bids again
+    this.claimAt = 0; // when the open early-end vote runs out
     this.version = 0;
     this.lastSeen = Date.now();
   }
@@ -75,6 +88,7 @@ export class Room {
     const known = token ? this.seats.findIndex((s) => s.kind === 'human' && s.token === token) : -1;
     if (known >= 0) {
       const seat = this.seats[known];
+      if (!this.humansOnline()) this.rearmClocks(); // the table was held while everyone was away
       if (seat.ws && seat.ws !== ws) { try { seat.ws.close(4000, 'replaced'); } catch { /* already closed */ } }
       seat.ws = ws;
       seat.connected = true;
@@ -119,6 +133,7 @@ export class Room {
         if (!host || this.stage !== 'lobby') return 'Only the host can change settings, before the match starts.';
         if (ROUND_CHOICES.includes(msg.rounds)) this.settings.rounds = msg.rounds;
         if (typeof msg.timers === 'boolean') this.settings.timers = msg.timers;
+        if (isScheme(msg.scoring)) this.settings.scoring = msg.scoring;
         break;
       }
       case 'addBot': {
@@ -143,7 +158,7 @@ export class Room {
         if (this.stage !== 'lobby') return 'The match has already started.';
         if (!msg.fillBots && this.seats.some((s) => s.kind === 'empty')) return 'Fill every seat, or start with bots in the empty ones.';
         this.seats.forEach((s, i) => { if (s.kind === 'empty') this.seatBot(i); });
-        this.match = new Match({ rounds: this.settings.rounds });
+        this.match = new Match({ rounds: this.settings.rounds, scoring: this.settings.scoring });
         this.beginRound();
         break;
       }
@@ -166,7 +181,7 @@ export class Room {
         me.afk = 0;
         break;
       }
-      case 'bid': case 'pass': case 'call': case 'play': {
+      case 'bid': case 'pass': case 'call': case 'play': case 'claim': case 'vote': {
         if (this.stage !== 'round') return 'There is no round in play.';
         if (msg.t === 'play' && Date.now() < this.pauseUntil) return 'The trick is still being cleared.';
         me.afk = 0;
@@ -194,16 +209,23 @@ export class Room {
     this.cursor = 0;
     this.showTrick = null;
     this.pauseUntil = 0;
+    this.claimAt = 0;
+    const { auctionOpen } = this.timing.limits;
+    this.auction = { at: Date.now() + auctionOpen, ms: auctionOpen };
+    this.pullEvents(); // a redeal is announced before anyone has acted
   }
 
   // -------------------------------------------------------------- engine
 
   apply(seat, action) {
     const round = this.match.round;
+    const kind = action.t ?? action.type;
     let res;
-    if (action.t === 'bid' || action.type === 'bid') res = round.placeBid(seat, action.value);
-    else if (action.t === 'pass' || action.type === 'pass') res = round.pass(seat);
-    else if (action.t === 'call' || action.type === 'call') res = round.callContract(seat, { friends: action.friends, cut: action.cut });
+    if (kind === 'bid') res = round.placeBid(seat, action.value);
+    else if (kind === 'pass') res = round.pass(seat);
+    else if (kind === 'call') res = round.callContract(seat, { friends: action.friends, cut: action.cut });
+    else if (kind === 'claim') res = round.startClaim(seat);
+    else if (kind === 'vote') res = round.vote(seat, action.yes === true);
     else res = round.play(seat, action.card);
     if (res.ok) this.afterEngine();
     return res;
@@ -213,11 +235,26 @@ export class Room {
     this.log.push({ id: this.log.length, ...event });
   }
 
-  afterEngine() {
+  /** Copy the engine's new events into the table log and return them. */
+  pullEvents() {
     const round = this.match.round;
     const fresh = round.events.slice(this.cursor);
     this.cursor = round.events.length;
     for (const e of fresh) this.push(e);
+    return fresh;
+  }
+
+  afterEngine() {
+    const round = this.match.round;
+    const fresh = this.pullEvents();
+    const now = Date.now();
+
+    // Every bid restarts the short "going once" clock. A new vote gets its own countdown.
+    if (fresh.some((e) => e.type === 'bid')) {
+      const ms = this.timing.limits.auctionBid;
+      this.auction = { at: now + ms, ms };
+    }
+    if (fresh.some((e) => e.type === 'claim')) this.claimAt = now + this.timing.limits.claim;
 
     if (fresh.some((e) => e.type === 'trick')) {
       const t = round.tricks.at(-1);
@@ -238,30 +275,87 @@ export class Room {
     this.broadcast();
   }
 
+  /** The auction and vote clocks are wall-clock deadlines, so give them their full time back after a pause. */
+  rearmClocks() {
+    const now = Date.now();
+    if (this.auction) this.auction.at = now + this.auction.ms;
+    if (this.match?.round?.claim) this.claimAt = now + this.timing.limits.claim;
+  }
+
+  after(ms, fn) {
+    this.timers.push(setTimeout(fn, Math.max(0, ms)));
+  }
+
+  clearTimers() {
+    this.timers.forEach(clearTimeout);
+    this.timers = [];
+  }
+
+  /** Set the timers for whatever happens next. Called after every change, so it starts from scratch each time. */
   schedule() {
-    clearTimeout(this.timer);
-    this.timer = null;
+    this.clearTimers();
     this.deadline = null;
     if (this.stage !== 'round' && this.stage !== 'between') return;
     if (!this.humansOnline()) return; // nobody is watching: hold the table
     const now = Date.now();
     if (now < this.pauseUntil) {
-      this.timer = setTimeout(() => this.endPause(), this.pauseUntil - now + 5);
+      this.after(this.pauseUntil - now + 5, () => this.endPause());
       return;
     }
     if (this.stage !== 'round') return;
     const round = this.match.round;
+    if (round.phase === 'bidding') return this.scheduleAuction(round, now);
+    if (round.claim) return this.scheduleClaim(round, now);
+
     const actor = round.currentActor();
-    if (actor === null) return;
+    if (actor === null) return undefined;
     const { botMin, botMax, limits } = this.timing;
     if (this.isAuto(actor)) {
-      const delay = botMin + Math.random() * (botMax - botMin);
-      this.timer = setTimeout(() => this.autopilot(actor, false), delay);
+      this.after(botMin + Math.random() * (botMax - botMin), () => this.autopilot(actor, false));
     } else if (this.settings.timers) {
       const ms = limits[round.phase];
       this.deadline = { seat: actor, at: now + ms, ms };
-      this.timer = setTimeout(() => this.autopilot(actor, true), ms);
+      this.after(ms, () => this.autopilot(actor, true));
     }
+    return undefined;
+  }
+
+  /** Open auction: every automatic seat that is still in thinks for a moment, and the clock runs down after each bid. */
+  scheduleAuction(round, now) {
+    const { auctionBotMin, auctionBotMax } = this.timing;
+    if (this.settings.timers && this.auction) {
+      this.deadline = { seat: null, kind: 'auction', at: this.auction.at, ms: this.auction.ms };
+      this.after(this.auction.at - now, () => this.closeAuction());
+    }
+    for (let s = 0; s < SEATS; s++) {
+      if (!this.isAuto(s) || !round.canPass(s)) continue; // passed out, or already holding the high bid
+      this.after(auctionBotMin + Math.random() * (auctionBotMax - auctionBotMin), () => this.autopilot(s, false));
+    }
+  }
+
+  /** Early-end vote: automatic seats answer quickly, and whoever has not voted by the deadline counts as no. */
+  scheduleClaim(round, now) {
+    const { botMin, botMax, limits } = this.timing;
+    this.deadline = { seat: null, kind: 'claim', at: this.claimAt, ms: limits.claim };
+    this.after(this.claimAt - now, () => this.closeClaim());
+    for (let s = 0; s < SEATS; s++) {
+      if (!this.isAuto(s) || round.claim.votes[s] !== null) continue;
+      this.after(botMin + Math.random() * (botMax - botMin), () => this.autopilot(s, false));
+    }
+  }
+
+  closeAuction() {
+    if (this.stage !== 'round') return;
+    const round = this.match.round;
+    if (round.phase === 'bidding' && round.closeBidding().ok) this.afterEngine();
+    else this.afterChange();
+  }
+
+  closeClaim() {
+    if (this.stage !== 'round') return;
+    const round = this.match.round;
+    if (round.claim && round.closeClaim().ok) this.afterEngine();
+    else this.afterChange();
   }
 
   endPause() {
@@ -270,10 +364,11 @@ export class Room {
   }
 
   autopilot(seat, timedOut) {
-    if (this.stage !== 'round') return;
+    if (this.stage !== 'round') return undefined;
     const round = this.match.round;
-    if (round.currentActor() !== seat) return this.afterChange();
-    if (timedOut) {
+    const open = round.phase === 'bidding' || Boolean(round.claim); // no single seat has the turn
+    if (!open && round.currentActor() !== seat) return this.afterChange();
+    if (timedOut && !open) {
       const s = this.seats[seat];
       s.afk = (s.afk ?? 0) + 1;
       this.push({ type: 'timeout', seat });
@@ -283,18 +378,23 @@ export class Room {
     try {
       const action = decide(round.view(seat));
       if (action) res = this.apply(seat, action);
+      else if (open) return this.afterChange(); // nothing for this seat to do
     } catch (err) {
       console.error('autopilot error:', err);
     }
     if (!res.ok) {
       console.error(`autopilot fell back (${res.error})`);
-      this.apply(seat, this.safeMove(round, seat));
+      const move = this.safeMove(round, seat);
+      if (move) this.apply(seat, move);
+      else this.afterChange();
     }
+    return undefined;
   }
 
   /** Last-resort legal move so a bug in a bot can never stall or crash a table. */
   safeMove(round, seat) {
-    if (round.phase === 'bidding') return { type: 'pass' };
+    if (round.phase === 'bidding') return round.canPass(seat) ? { type: 'pass' } : null;
+    if (round.claim) return round.claim.votes[seat] === null ? { type: 'vote', yes: false } : null;
     if (round.phase === 'calling') return { type: 'call', friends: round.callableCards().slice(0, 2), cut: 'S' };
     return { type: 'play', card: round.legalCards(seat)[0] };
   }
@@ -346,7 +446,6 @@ export class Room {
   }
 
   dispose() {
-    clearTimeout(this.timer);
-    this.timer = null;
+    this.clearTimers();
   }
 }

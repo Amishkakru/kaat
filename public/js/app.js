@@ -88,7 +88,7 @@ function render() {
     clearTrick();
     store.ui.friends = [];
     store.ui.cut = null;
-    store.ui.bid = null;
+    store.ui.claimsSeen = game()?.claim.log.length ?? 0;
     lastRound = snap.roundNo ?? -1;
   }
   lastStage = snap.stage;
@@ -99,6 +99,7 @@ function render() {
   $('#barRound').textContent = snap.roundNo && snap.stage !== 'lobby' ? `Round ${snap.roundNo} of ${snap.rounds}` : '';
   document.title = snap.stage === 'lobby' ? `Kaat ${snap.room}` : `${game()?.turn === snap.you ? 'Your turn. ' : ''}Kaat ${snap.room}`;
 
+  announce(snap);
   updateSeats();
   renderContract();
   renderInlay();
@@ -108,6 +109,27 @@ function render() {
   renderSheet();
   renderLedger();
   renderThreads();
+}
+
+/** One-off notices that come from the game itself rather than from something the player did. */
+function announce(snap) {
+  const G = snap.game;
+  if (!G) return;
+  if (G.redeals.length && store.ui.redealShown !== snap.roundNo) {
+    store.ui.redealShown = snap.roundNo;
+    const who = [...new Set(G.redeals.flatMap((r) => r.seats))].map((s) => seatName(s));
+    const list = who.length > 1 ? `${who.slice(0, -1).join(', ')} and ${who.at(-1)}` : who[0];
+    const times = G.redeals.length > 1 ? ` ${G.redeals.length} times` : '';
+    toast(`Dealt again${times}: ${list} held no ace, king, queen or jack.`, { ms: 6000 });
+  }
+  const log = G.claim.log;
+  if (log.length > (store.ui.claimsSeen ?? 0)) {
+    const last = log.at(-1);
+    if (!last.passed) {
+      toast(`The vote to end the round failed, ${last.yes} yes to ${last.no} no. Play continues.`, { kind: 'warn', ms: 4500 });
+    }
+    store.ui.claimsSeen = log.length;
+  }
 }
 
 // ---------------------------------------------------------------- startup

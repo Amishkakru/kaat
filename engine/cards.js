@@ -25,6 +25,10 @@ export function pointsOf(card) {
   }
 }
 
+/** Ace, king, queen and jack: the cards that carry points. A hand with none of them is redealt. */
+export const FACE_RANKS = ['A', 'K', 'Q', 'J'];
+export const isFace = (card) => FACE_RANKS.includes(rankOf(card));
+
 export const makeDeck = () => SUITS.flatMap((s) => RANKS.map((r) => r + s));
 const DECK_SET = new Set(makeDeck());
 export const isCard = (c) => typeof c === 'string' && DECK_SET.has(c);

@@ -7,7 +7,7 @@ import {
   $, esc, reduced, initial, renderIfChanged, toast,
 } from './util.js';
 import {
-  cardEl, backEl, suitSvg, cardText, tilt, SUIT_NAME,
+  cardEl, backEl, suitSvg, cardText, cardName, tilt, SUIT_NAME,
 } from './cards.js';
 
 const seatEls = [];
@@ -82,6 +82,7 @@ export function updateSeats() {
     const role = roleOf(G, i);
     const turn = G && !G.result && G.turn === i && G.phase !== 'done';
     const passed = G?.phase === 'bidding' && G.bidding.passed[i];
+    const high = G?.phase === 'bidding' && G.bidding.high?.seat === i;
     const empty = info.kind === 'empty';
 
     el.className = [
@@ -89,6 +90,7 @@ export function updateSeats() {
       empty && 'is-empty',
       i === me() && 'is-me',
       turn && 'is-turn',
+      high && 'is-high',
       passed && 'is-out',
       info.kind === 'human' && !info.connected && 'is-offline',
       role && `is-${role}`,
@@ -257,6 +259,9 @@ export function renderInlay() {
   if (G?.phase === 'bidding' && G.bidding.high) {
     html = `<div class="inlay-bid"><b>${G.bidding.high.value}</b><span>${esc(seatName(G.bidding.high.seat))}</span></div>`;
     sig = `bid${G.bidding.high.value}${G.bidding.high.seat}`;
+  } else if (G?.phase === 'bidding') {
+    html = '<div class="inlay-bid is-empty"><b>170</b><span>Lowest bid</span></div>';
+    sig = 'nobid';
   } else if (G?.phase === 'calling') {
     html = `<div class="inlay-bid"><b>${G.bid}</b><span>${esc(seatName(G.caller))} names friends and the cut</span></div>`;
     sig = `call${G.bid}`;
@@ -267,52 +272,79 @@ export function renderInlay() {
   renderIfChanged(node, sig, () => { node.innerHTML = html; });
 }
 
+/** The call, kept in view all round: what the caller needs, the cut suit and the two friend cards. */
 export function renderContract() {
   const G = game();
   const node = $('#contract');
   if (!G || store.snap.stage === 'lobby') { node.innerHTML = ''; return; }
   const snap = store.snap;
-
-  let html = '';
-  if (G.phase === 'bidding') {
-    const h = G.bidding.high;
-    html = `<div class="contract-line">
-        <span>${esc(seatName(G.startSeat))} opened the bidding.</span>
-        ${h ? `<span>High bid <b class="num">${h.value}</b> by ${esc(seatName(h.seat))}</span>` : '<span>No bid yet. The lowest bid is 170.</span>'}
-      </div>`;
-  } else if (G.phase === 'calling') {
-    html = `<div class="contract-line"><span>${esc(seatName(G.caller))} won the bid at <b class="num">${G.bid}</b>.</span><span>Friends and the cut come next.</span></div>`;
-  } else {
-    const revealedSeats = G.revealed.map((r) => r.seat);
-    const teamSeats = G.result ? G.result.teamSeats : [G.caller, ...revealedSeats];
-    const known = teamSeats.reduce((s, x) => s + G.won[x], 0);
-    const pct = Math.min(100, Math.round((known / G.bid) * 100));
-    const friendChips = G.friendCards.map((c) => {
-      const played = G.tricks.some((t) => t.plays.some((p) => p.card === c))
-        || (G.trick?.plays ?? []).some((p) => p.card === c)
-        || (G.showTrick?.plays ?? []).some((p) => p.card === c);
-      const holder = G.revealed.find((r) => r.cards.includes(c));
-      const callerHeld = G.callerPlayed.includes(c);
-      const status = holder ? `${esc(seatName(holder.seat))} played it` : callerHeld ? 'Played by the caller'
-        : G.holdsCalled.includes(c) ? 'In your hand' : played ? 'Played' : 'Not played yet';
-      return `<span class="friend-chip ${played ? 'is-played' : ''}" title="${esc(status)}">
-          <span class="mini ${/[HD]$/.test(c) ? 'is-red' : 'is-ink'}">${c.slice(0, -1)}${suitSvg(c.slice(-1))}</span>
-          <small>${status}</small></span>`;
-    }).join('');
-    html = `
-      <div class="contract-main">
-        <div class="need"><span>${esc(seatName(G.caller))} needs</span><b class="num">${G.bid}</b></div>
-        <div class="cutmark is-${G.cut}" title="Cut suit: ${SUIT_NAME[G.cut]}">${suitSvg(G.cut)}<small>Cut</small></div>
-        <div class="friends"><small>Friend cards</small><div class="friend-chips">${friendChips}</div></div>
-      </div>
-      <div class="meter" role="img" aria-label="${known} of ${G.bid} points taken by the caller and revealed friends">
-        <div class="meter-bar"><i style="width:${pct}%"></i></div>
-        <span class="meter-text"><b class="num">${known}</b> of ${G.bid} <small>taken by the caller${revealedSeats.length ? ' and revealed friends' : ''}</small></span>
-      </div>`;
-  }
+  const named = Boolean(G.cut);
+  const html = `<div class="slip slip-${G.phase === 'done' ? 'playing' : G.phase}">${needBlock(G)}${cutBlock(G, named)}${friendBlock(G, named)}${meterBlock(G)}</div>`;
   renderIfChanged(node, html, () => { node.innerHTML = html; });
   // Room code and round number live in the header.
   $('#barRound').textContent = snap.roundNo ? `Round ${snap.roundNo} of ${snap.rounds}` : '';
+}
+
+function needBlock(G) {
+  if (G.phase === 'bidding') {
+    const h = G.bidding.high;
+    return h
+      ? `<div class="slip-bid"><span class="slip-label">${esc(seatName(h.seat))} holds the high bid</span><b class="num slip-num">${h.value}</b></div>`
+      : '<div class="slip-bid is-faint"><span class="slip-label">No bid yet</span><b class="num slip-num">170</b><span class="slip-sub">Lowest bid</span></div>';
+  }
+  if (G.phase === 'calling') {
+    return `<div class="slip-bid"><span class="slip-label">${esc(seatName(G.caller))} won the auction at</span><b class="num slip-num">${G.bid}</b></div>`;
+  }
+  return `<div class="slip-bid">
+      <span class="slip-label">${esc(seatName(G.caller))} needs</span>
+      <b class="num slip-num">${G.bid}</b>
+    </div>`;
+}
+
+/** Points the caller's side has taken so far, against the bid. Only the caller and revealed friends are counted. */
+function meterBlock(G) {
+  if (G.phase === 'bidding' || G.phase === 'calling') return '';
+  const revealed = G.revealed.map((r) => r.seat);
+  const team = G.result ? G.result.teamSeats : [G.caller, ...revealed];
+  const known = team.reduce((total, x) => total + G.won[x], 0);
+  const pct = Math.min(100, Math.round((known / G.bid) * 100));
+  const who = revealed.length || G.result ? 'the caller and friends' : 'the caller';
+  return `<div class="slip-meter meter" role="img" aria-label="${known} of ${G.bid} points taken by ${who}">
+      <span class="meter-text"><b class="num">${known}</b> of ${G.bid} points taken by ${who}</span>
+      <div class="meter-bar"><i style="width:${pct}%"></i></div>
+    </div>`;
+}
+
+function cutBlock(G, named) {
+  if (!named) {
+    return `<div class="slip-cut is-empty"><span class="medal" aria-hidden="true">?</span><small>${G.phase === 'calling' ? 'Cut suit being chosen' : 'Cut suit, named after the auction'}</small></div>`;
+  }
+  return `<div class="slip-cut is-${G.cut}" title="Cut suit: ${SUIT_NAME[G.cut]}">
+      <span class="medal">${suitSvg(G.cut)}</span>
+      <small><b>${SUIT_NAME[G.cut]}</b> is the cut</small>
+    </div>`;
+}
+
+function friendBlock(G, named) {
+  if (!named) {
+    const why = G.phase === 'calling' ? 'Friends being chosen' : 'Two friend cards, named after the auction';
+    return `<div class="slip-friends is-empty" aria-label="${why}">
+        <div class="friend-tile is-slot"><span class="card-slot" aria-hidden="true">?</span></div>
+        <div class="friend-tile is-slot"><span class="card-slot" aria-hidden="true">?</span></div>
+        <small class="slip-note">${why}</small>
+      </div>`;
+  }
+  const tiles = G.friendCards.map((c) => {
+    const holder = G.revealed.find((r) => r.cards.includes(c));
+    let state = 'hidden';
+    let caption = 'Not played yet';
+    if (holder) { state = 'out'; caption = `<b>${esc(seatName(holder.seat))}</b> played it`; }
+    else if (G.callerPlayed.includes(c)) { state = 'caller'; caption = 'Caller played it'; }
+    else if (G.holdsCalled.includes(c)) { state = 'mine'; caption = 'In your hand'; }
+    const face = cardEl(c, { cls: 'in-banner' }).outerHTML;
+    return `<div class="friend-tile is-${state}" title="${esc(cardName(c))}: ${state === 'out' ? 'friend revealed' : caption.replace(/<[^>]+>/g, '')}">${face}<small>${caption}</small></div>`;
+  }).join('');
+  return `<div class="slip-friends" role="group" aria-label="Friend cards called">${tiles}</div>`;
 }
 
 // ---------------------------------------------------------------- threads
