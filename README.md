@@ -48,7 +48,7 @@ KAAT_FAST=1 npm start   # bots, pauses and timers run near-instantly, for testin
 
 - 40 cards: the 2s, 3s and 4s are removed. 250 points in play: Q♠ 60, aces 20, kings 15, other queens 10, jacks 5.
 - Each player gets 4 cards. If anyone holds no ace, king, queen or jack, the table is dealt again until every hand has one. About half of all deals need this, and the table is told who triggered it.
-- Bidding is an open auction with no turns. Anyone can bid at any moment, from 170 to 250 in steps of 10, and can jump straight to a higher number. The first bid at a price stands; a later bid at the same price is refused. A pass is final and the high bidder cannot pass. The auction ends when everyone else has passed, when someone bids 250, or when the clock runs out after the last bid.
+- Bidding is an open auction with no turns. Anyone can bid at any moment, from 170 to 250, and can jump straight to a higher number. Bids rise by 10 up to 200 and by 5 above it (170, 180, 190, 200, 205, 210 … 250). The first bid at a price stands; a later bid at the same price is refused. A pass is final and the high bidder cannot pass. The auction ends when everyone else has passed, when someone bids 250, or when the clock runs out after the last bid.
 - The winner (the caller) names two friend cards and a cut suit. A friend card cannot be the A♠ or one of the caller's own first four cards. Then everyone gets 4 more cards.
 - Whoever holds a friend card is on the caller's team, hidden until they play it. The caller may hold one or both.
 - Eight tricks. The caller leads the first; each trick winner leads the next. Follow suit if you can. The highest cut card wins; with no cut card, the highest card of the led suit wins.
@@ -57,7 +57,7 @@ KAAT_FAST=1 npm start   # bots, pauses and timers run near-instantly, for testin
 
 ### Scoring
 
-The base stake is (bid − 160) / 10, so 170 is 1 and 250 is 9. The host picks how it is paid out in the lobby. Head to head is the default.
+The base stake is (bid − 160) / 10, so 170 is 1, 205 is 4.5 and 250 is 9. The host picks how it is paid out in the lobby. Head to head is the default.
 
 | Scheme | How it pays | Balanced? |
 |---|---|---|

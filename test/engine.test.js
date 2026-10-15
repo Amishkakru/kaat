@@ -4,7 +4,7 @@ import {
   makeDeck, pointsOf, TOTAL_POINTS, mulberry32, suitOf, sortHand, isFace,
 } from '../engine/cards.js';
 import {
-  Round, Match, SEATS, MAX_BID, CLAIM_VOTES,
+  Round, Match, SEATS, MAX_BID, BID_LADDER, CLAIM_VOTES,
 } from '../engine/round.js';
 import { decide, runAuction } from '../engine/bots.js';
 import { scoreRound, SCHEMES, DEFAULT_SCHEME } from '../engine/scoring.js';
@@ -136,6 +136,23 @@ test('auction: the high bidder wins when the clock runs out, and 250 ends it at 
   assert.equal(q.bid, 250);
 });
 
+test('auction: bids rise by 10 up to 200 and by 5 above it', () => {
+  assert.deepEqual(BID_LADDER.slice(0, 7), [170, 180, 190, 200, 205, 210, 215]);
+  assert.equal(BID_LADDER.at(-1), MAX_BID);
+  const r = new Round({ startSeat: 0, rng: rng(3) });
+  assert.equal(r.placeBid(0, 195).ok, false, '195 is not on the ladder');
+  assert.ok(r.placeBid(0, 200).ok);
+  assert.equal(r.legalBids(1)[0], 205, 'the minimum raise above 200 is 5');
+  assert.equal(r.placeBid(1, 202).ok, false);
+  assert.match(r.placeBid(1, 203).error, /rise by 10 up to 200 and by 5/);
+  assert.ok(r.placeBid(1, 205).ok);
+  assert.equal(r.legalBids(2)[0], 210);
+  assert.ok(r.placeBid(2, 245).ok, 'a jump to any fifth is fine');
+  assert.equal(r.legalBids(3)[0], 250);
+  assert.equal(r.placeBid(3, 250).ok, true);
+  assert.equal(r.phase, 'calling', '250 still closes the auction');
+});
+
 test('auction: if nobody bids, the last seat standing takes 170', () => {
   const r = new Round({ startSeat: 1, rng: rng(4) });
   for (const s of [1, 2, 3, 4]) assert.ok(r.pass(s).ok);
@@ -157,7 +174,7 @@ test('auction: bots settle on a winner from any opening seat', () => {
     const r = new Round({ startSeat: seed % SEATS, rng: rng(seed) });
     runAuction(r);
     assert.equal(r.phase, 'calling');
-    assert.ok(r.bid >= 170 && r.bid <= MAX_BID && r.bid % 10 === 0);
+    assert.ok(BID_LADDER.includes(r.bid));
   }
 });
 
@@ -364,9 +381,21 @@ test('scoring: margin raises the stake by 1 per 20 points past or short of the b
   assert.deepEqual(at(220).deltas, [30, 15, -15, -15, -15]);
 });
 
+test('scoring: a bid of 205 carries a stake of 4.5 and still balances', () => {
+  const win = scoreRound({
+    scheme: 'pairwise', bid: 205, caller: 0, friendSeats: [1], teamPoints: 210,
+  });
+  assert.equal(win.stake, 4.5);
+  assert.deepEqual(win.deltas, [27, 13.5, -13.5, -13.5, -13.5]);
+  const classic = scoreRound({
+    scheme: 'classic', bid: 205, caller: 0, friendSeats: [1], teamPoints: 100,
+  });
+  assert.deepEqual(classic.deltas, [-9, -4.5, 4.5, 4.5, 4.5]);
+});
+
 test('scoring: every zero-sum scheme balances for every bid, team shape and result', () => {
   for (const scheme of ['pairwise', 'margin']) {
-    for (let bid = 170; bid <= 250; bid += 10) {
+    for (const bid of BID_LADDER) {
       for (const friendSeats of [[], [3], [3, 4]]) {
         for (const teamPoints of [0, 90, bid - 10, bid, bid + 10, 250]) {
           const { deltas } = scoreRound({

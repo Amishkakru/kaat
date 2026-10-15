@@ -191,7 +191,7 @@ test('rejects illegal moves, unknown rooms, a sixth player and late joiners', as
     const guest = guests[0];
     guest.send({ t: 'bid', value: 175 });
     await sleep(40);
-    assert.match(guest.errors.at(-1).msg, /steps of 10/);
+    assert.match(guest.errors.at(-1).msg, /rise by 10 up to 200 and by 5/);
     guest.send({ t: 'play', card: guest.state.game.hand[0] });
     await sleep(40);
     assert.ok(guest.errors.at(-1).msg);

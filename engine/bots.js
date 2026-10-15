@@ -56,7 +56,7 @@ function decideBid(v) {
   // Fitted on 6,000 simulated rounds: suit length and the A♠ predict the team's final points far
   // better than the points showing in the first four cards.
   const estimate = 134 + 0.24 * pts + 12.4 * longest + (hand.includes('AS') ? 12 : 0) + handTemperament(hand);
-  const ceiling = Math.floor(estimate / 10) * 10;
+  const ceiling = Math.floor(estimate / 5) * 5;
   return legal[0] <= ceiling ? { type: 'bid', value: legal[0] } : { type: 'pass' };
 }
 

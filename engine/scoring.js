@@ -1,6 +1,6 @@
 // How a finished round turns into points. Pure functions: nothing here knows about cards or tricks.
 //
-// Every scheme starts from the same base stake, (bid - 160) / 10, so 170 is 1 and 250 is 9.
+// Every scheme starts from the same base stake, (bid - 160) / 10, so 170 is 1, 205 is 4.5 and 250 is 9.
 //   classic   caller 2x, each friend 1x on the winning side; every opponent takes 1x the other way.
 //             Zero-sum only when the caller has exactly one friend.
 //   pairwise  every opponent settles separately with every member of the caller's side: they pay the

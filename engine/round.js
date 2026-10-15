@@ -11,11 +11,23 @@ export const DEAL_FIRST = 4;
 export const HAND_SIZE = 8;
 export const MIN_BID = 170;
 export const MAX_BID = 250;
-export const BID_STEP = 10;
+export const BID_STEP = 10; // bids rise by 10 up to FINE_FROM
+export const FINE_FROM = 200;
+export const FINE_STEP = 5; // and by 5 from there to MAX_BID
 export const CLAIM_VOTES = 3; // yes votes, out of five seats, that end a round early
 const MAX_REDEALS = 30; // a safety stop; the chance of reaching it is about 1 in 10 billion
 
 const fail = (error) => ({ ok: false, error });
+
+/** The smallest bid above `value`: steps of 10 up to 200, then steps of 5. */
+export const nextBid = (value) => value + (value >= FINE_FROM ? FINE_STEP : BID_STEP);
+
+/** Every bid that can be made, lowest first. */
+export const BID_LADDER = (() => {
+  const out = [];
+  for (let v = MIN_BID; v <= MAX_BID; v = nextBid(v)) out.push(v);
+  return out;
+})();
 const OK = Object.freeze({ ok: true });
 const zeros = () => Array(SEATS).fill(0);
 const sum = (xs) => xs.reduce((a, b) => a + b, 0);
@@ -85,14 +97,14 @@ export class Round {
   // ---------------------------------------------------------------- bidding
 
   #bidMin() {
-    return this.bidding.high ? this.bidding.high.value + BID_STEP : MIN_BID;
+    return this.bidding.high ? nextBid(this.bidding.high.value) : MIN_BID;
   }
 
   /** Bids `seat` may make right now. Empty once they have passed or while they hold the high bid. */
   legalBids(seat) {
     if (this.phase !== 'bidding' || this.bidding.passed[seat] || this.bidding.high?.seat === seat) return [];
     const out = [];
-    for (let v = this.#bidMin(); v <= MAX_BID; v += BID_STEP) out.push(v);
+    for (let v = this.#bidMin(); v <= MAX_BID; v = nextBid(v)) out.push(v);
     return out;
   }
 
@@ -110,7 +122,7 @@ export class Round {
       if (this.bidding.high && Number.isInteger(value) && value <= this.bidding.high.value) {
         return fail(`${this.bidding.high.value} is already bid. Bid ${legal[0]} or more.`);
       }
-      return fail(`Bid ${legal[0]} to ${MAX_BID} in steps of ${BID_STEP}.`);
+      return fail(`Bid ${legal[0]} to ${MAX_BID}. Bids rise by ${BID_STEP} up to ${FINE_FROM} and by ${FINE_STEP} above it.`);
     }
     this.bidding.high = { seat, value };
     this.bidding.last[seat] = value;

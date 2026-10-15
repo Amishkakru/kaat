@@ -17,7 +17,7 @@ const HTML = `
       </section>
       <section>
         <h3>The auction</h3>
-        <p>Bidding is an open auction with no turns. Anyone can bid at any moment, from 170 to 250 in steps of 10, and you can jump straight to a higher number. If two bids arrive at the same price, the first one stands and the second must go higher.</p>
+        <p>Bidding is an open auction with no turns. Anyone can bid at any moment, from 170 to 250. Bids rise by 10 up to 200 and by 5 above it, and you can jump straight to a higher number. If two bids arrive at the same price, the first one stands and the second must go higher.</p>
         <p>The auction ends when everyone else has passed, when someone bids 250, or when the clock runs out after the last bid. The high bidder becomes the caller. A pass is final, and the high bidder cannot pass. If nobody bids, the last seat in order from the round’s opening seat takes the call at 170.</p>
       </section>
       <section>
@@ -34,7 +34,7 @@ const HTML = `
       </section>
       <section>
         <h3>Scoring</h3>
-        <p>The caller’s team counts the points in the tricks it won. Reach the bid and the team wins. The stake is (bid − 160) ÷ 10, so a 170 bid is worth 1 and a 250 bid is worth 9. The host picks how the stake is paid out:</p>
+        <p>The caller’s team counts the points in the tricks it won. Reach the bid and the team wins. The stake is (bid − 160) ÷ 10, so a 170 bid is worth 1, a 205 bid is worth 4.5 and a 250 bid is worth 9. The host picks how the stake is paid out:</p>
         <p><b>Classic.</b> The caller scores 2 stakes, each friend 1, and each opponent takes the opposite of 1 stake. It balances only when the caller has exactly one friend.</p>
         <p><b>Head to head.</b> Each opponent settles with each member of the caller’s side: 2 stakes to the caller and 1 to each friend, paid by the opponent if the caller wins and collected if the caller falls short. Scores always add up to zero, so a caller who plays alone risks more and wins more.</p>
         <p><b>Margin.</b> Head to head, and the stake goes up by 1 for every 20 points the caller’s side finished past the bid or short of it, up to 3 extra.</p>

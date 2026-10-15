@@ -28,8 +28,9 @@ function auctionHtml(G, me, handPts) {
   const { legal, high } = G.bidding;
   const leader = high ? `${esc(seatName(high.seat))} leads at <b>${high.value}</b>.` : 'Nobody has bid yet.';
   if (legal.length) {
-    const rungs = legal.slice(1, 5);
-    if (legal.length > 5) rungs.push(legal.at(-1));
+    // The next bid up, then round numbers, so the 5-point steps above 200 still offer real jumps.
+    const rungs = [legal[1], ...legal.slice(2).filter((v) => v % 10 === 0)].filter(Boolean).slice(0, 4);
+    if (legal.length > 5 && !rungs.includes(legal.at(-1))) rungs.push(legal.at(-1));
     return `
       <div class="bidbox" role="group" aria-label="Your bid">
         <button class="btn primary bid-main" type="button" data-act="bid" data-value="${legal[0]}">Bid <b class="num">${legal[0]}</b></button>
